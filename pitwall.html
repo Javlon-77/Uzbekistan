@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pitwall Manager - Mini</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #1a1a1a;
+            color: #ffffff;
+            text-align: center;
+            margin: 0;
+            padding: 20px;
+        }
+        .game-container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 0 15px rgba(0,0,0,0.5);
+        }
+        .stats {
+            display: flex;
+            justify-content: space-around;
+            margin: 20px 0;
+            font-size: 18px;
+        }
+        .stat-box {
+            background: #3a3a3a;
+            padding: 10px 15px;
+            border-radius: 5px;
+        }
+        button {
+            background-color: #e50914;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            font-size: 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+            transition: 0.2s;
+        }
+        button:hover {
+            background-color: #b20710;
+        }
+        button:disabled {
+            background-color: #555;
+            cursor: not-allowed;
+        }
+        #log {
+            margin-top: 20px;
+            height: 120px;
+            background: #111;
+            border: 1px solid #444;
+            padding: 10px;
+            text-align: left;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 14px;
+        }
+        .track {
+            font-size: 24px;
+            margin: 15px 0;
+            letter-spacing: 5px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="game-container">
+    <h2>🏎️ Pitwall Manager: Race Control</h2>
+    
+    <div class="track" id="trackView">🏁 . . . 🚗 . . . 🏁</div>
+
+    <div class="stats">
+        <div class="stat-box">Aylana: <span id="lap">1</span>/5</div>
+        <div class="stat-box">Shina: <span id="tyres">100</span>%</div>
+        <div class="stat-box">Yonilg'i: <span id="fuel">100</span>%</div>
+    </div>
+
+    <div>
+        <button id="btnPush" onclick="setStrategy('push')">Tezroq haydash (Push)</button>
+        <button id="btnNormal" onclick="setStrategy('normal')">Normal</button>
+        <button id="btnSave" onclick="setStrategy('save')">Tejamkor (Save)</button>
+    </div>
+
+    <hr style="border-color: #444; margin: 20px 0;">
+
+    <div>
+        <button onclick="pitStop('soft')" id="btnSoft">Pit-stop: Soft (Tez)</button>
+        <button onclick="pitStop('medium')" id="btnMed">Pit-stop: Medium</button>
+        <button onclick="pitStop('fuel')" id="btnFuel">Faqat Yonilg'i quyish</button>
+    </div>
+
+    <div id="log">Poyga boshlandi! Strategiyani tanlang...</div>
+</div>
+
+<script>
+    let lap = 1;
+    let tyres = 100;
+    let fuel = 100;
+    let strategy = 'normal';
+    let isRacing = true;
+
+    const logDiv = document.getElementById('log');
+
+    function addLog(text) {
+        logDiv.innerHTML += `<br>` + text;
+        logDiv.scrollTop = logDiv.scrollHeight;
+    }
+
+    function setStrategy(strat) {
+        strategy = strat;
+        addLog(`Strategiya o'zgartirildi: ${strat.toUpperCase()}`);
+    }
+
+    function pitStop(type) {
+        if (!isRacing) return;
+        
+        if (type === 'soft') {
+            tyres = 100;
+            fuel = Math.min(100, fuel + 30);
+            addLog("🔧 Pit-stop: Yangi Soft shinalar taqildi va yonilg'i qo'shildi! (-3 soniya vaqt)");
+        } else if (type === 'medium') {
+            tyres = 100;
+            fuel = 100;
+            addLog("🔧 Pit-stop: To'liq xizmat ko'rsatildi (Shina + To'liq yonilg'i)!");
+        } else if (type === 'fuel') {
+            fuel = 100;
+            addLog("⛽ Pit-stop: Faqat yonilg'i quyildi.");
+        }
+    }
+
+    // Har 2 sekundda 1 aylana o'tadi
+    let gameInterval = setInterval(() => {
+        if (!isRacing) return;
+
+        // Strategiyaga qarab resurslarning kamayishi
+        if (strategy === 'push') {
+            tyres -= 35;
+            fuel -= 30;
+            addLog(`Aylana ${lap}: Qattiq bosilyapti! 💨`);
+        } else if (strategy === 'normal') {
+            tyres -= 20;
+            fuel -= 20;
+            addLog(`Aylana ${lap}: Normal sur’atda davom etmoqda.`);
+        } else if (strategy === 'save') {
+            tyres -= 10;
+            fuel -= 12;
+            addLog(`Aylana ${lap}: Resurslar tejalmoqda 🛡️`);
+        }
+
+        // Resurslar tugab qolsa
+        if (tyres <= 0) {
+            tyres = 0;
+            addLog("❌ Shinalar yaroqsiz holatga keldi! Mashina sekinlashdi.");
+            tyres = 10; // jarima bilan biroz tiklanadi
+        }
+        if (fuel <= 0) {
+            fuel = 0;
+            isRacing = false;
+            addLog("⛽ Yonilg'i tugadi! Poyga tugadi (DNF). ❌");
+            document.querySelectorAll('button').forEach(b => b.disabled = true);
+        }
+
+        // Ekranlarni yangilash
+        document.getElementById('lap').innerText = lap;
+        document.getElementById('tyres').innerText = Math.max(0, tyres);
+        document.getElementById('fuel').innerText = Math.max(0, fuel);
+
+        if (lap >= 5 && isRacing) {
+            isRacing = false;
+            addLog("🏆 Tabriklaymiz! Mashina marraga muvaffaqiyatli yetib keldi!");
+            document.querySelectorAll('button').forEach(b => b.disabled = true);
+        } else {
+            lap++;
+        }
+
+    }, 2500);
+</script>
+
+</body>
+</html>
