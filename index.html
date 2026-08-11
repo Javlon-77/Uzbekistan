@@ -1,186 +1,854 @@
+```html
 <!DOCTYPE html>
 <html lang="uz">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pitwall Manager - Mini</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            background-color: #1a1a1a;
-            color: #ffffff;
-            text-align: center;
-            margin: 0;
-            padding: 20px;
-        }
-        .game-container {
-            max-width: 600px;
-            margin: 0 auto;
-            background: #2a2a2a;
-            padding: 20px;
-            border-radius: 10px;
-            box-shadow: 0 0 15px rgba(0,0,0,0.5);
-        }
-        .stats {
-            display: flex;
-            justify-content: space-around;
-            margin: 20px 0;
-            font-size: 18px;
-        }
-        .stat-box {
-            background: #3a3a3a;
-            padding: 10px 15px;
-            border-radius: 5px;
-        }
-        button {
-            background-color: #e50914;
-            color: white;
-            border: none;
-            padding: 12px 20px;
-            font-size: 16px;
-            border-radius: 5px;
-            cursor: pointer;
-            margin: 5px;
-            transition: 0.2s;
-        }
-        button:hover {
-            background-color: #b20710;
-        }
-        button:disabled {
-            background-color: #555;
-            cursor: not-allowed;
-        }
-        #log {
-            margin-top: 20px;
-            height: 120px;
-            background: #111;
-            border: 1px solid #444;
-            padding: 10px;
-            text-align: left;
-            overflow-y: auto;
-            font-family: monospace;
-            font-size: 14px;
-        }
-        .track {
-            font-size: 24px;
-            margin: 15px 0;
-            letter-spacing: 5px;
-        }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pitwall Manager</title>
+
+<style>
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: Arial, sans-serif;
+    background:
+        radial-gradient(circle at top, #26354a, #080b10 65%);
+    color: white;
+    min-height: 100vh;
+}
+
+header {
+    height: 70px;
+    background: #10151d;
+    border-bottom: 2px solid #303a48;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 30px;
+}
+
+.logo {
+    font-size: 25px;
+    font-weight: bold;
+    color: #ff304f;
+}
+
+.money {
+    background: #1c2633;
+    padding: 10px 18px;
+    border-radius: 10px;
+    color: #4dff88;
+    font-weight: bold;
+}
+
+.container {
+    max-width: 1400px;
+    margin: auto;
+    padding: 20px;
+}
+
+.dashboard {
+    display: grid;
+    grid-template-columns: 1.5fr 1fr;
+    gap: 20px;
+}
+
+.card {
+    background: rgba(17, 23, 32, .95);
+    border: 1px solid #303b4a;
+    border-radius: 15px;
+    padding: 20px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.35);
+}
+
+.card h2 {
+    margin-bottom: 15px;
+    font-size: 20px;
+}
+
+.track {
+    height: 350px;
+    border-radius: 15px;
+    position: relative;
+    overflow: hidden;
+    background:
+        linear-gradient(90deg, #20252b 0%, #30353c 50%, #20252b 100%);
+}
+
+.track::before {
+    content: "";
+    position: absolute;
+    inset: 30px 60px;
+    border: 18px solid #111;
+    border-radius: 50%;
+}
+
+.track::after {
+    content: "";
+    position: absolute;
+    width: 70%;
+    height: 4px;
+    background: repeating-linear-gradient(
+        90deg,
+        white 0 20px,
+        transparent 20px 40px
+    );
+    left: 15%;
+    top: 50%;
+}
+
+.car {
+    position: absolute;
+    width: 48px;
+    height: 24px;
+    background: #e3263e;
+    border-radius: 8px;
+    z-index: 3;
+    box-shadow: 0 0 15px #ff304f;
+    transition: all .7s linear;
+}
+
+.car::before,
+.car::after {
+    content: "";
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    background: #050505;
+    border-radius: 50%;
+    top: 7px;
+}
+
+.car::before {
+    left: -4px;
+}
+
+.car::after {
+    right: -4px;
+}
+
+.status {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    margin-top: 15px;
+}
+
+.stat {
+    background: #151d27;
+    padding: 12px;
+    border-radius: 10px;
+    text-align: center;
+}
+
+.stat small {
+    color: #8995a5;
+}
+
+.stat strong {
+    display: block;
+    font-size: 20px;
+    margin-top: 5px;
+}
+
+.strategy {
+    display: grid;
+    gap: 12px;
+}
+
+button {
+    border: none;
+    padding: 13px;
+    border-radius: 9px;
+    background: #242f3d;
+    color: white;
+    cursor: pointer;
+    font-weight: bold;
+    transition: .2s;
+}
+
+button:hover {
+    background: #354457;
+    transform: translateY(-1px);
+}
+
+button.primary {
+    background: #e3263e;
+}
+
+button.primary:hover {
+    background: #ff4058;
+}
+
+button.green {
+    background: #159447;
+}
+
+button.yellow {
+    background: #c99500;
+}
+
+button.blue {
+    background: #176bc0;
+}
+
+.driver {
+    display: flex;
+    justify-content: space-between;
+    background: #151d27;
+    padding: 15px;
+    border-radius: 10px;
+    margin-bottom: 12px;
+}
+
+.driver-info {
+    display: flex;
+    gap: 12px;
+}
+
+.avatar {
+    width: 45px;
+    height: 45px;
+    border-radius: 50%;
+    background: linear-gradient(135deg,#ff304f,#6414ff);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+}
+
+.bar {
+    height: 8px;
+    background: #283240;
+    border-radius: 5px;
+    overflow: hidden;
+    margin-top: 7px;
+}
+
+.bar div {
+    height: 100%;
+    background: #4dff88;
+}
+
+.tire {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+}
+
+.log {
+    height: 160px;
+    overflow-y: auto;
+    background: #080c11;
+    padding: 12px;
+    border-radius: 10px;
+    font-family: monospace;
+    font-size: 13px;
+}
+
+.log p {
+    margin-bottom: 7px;
+    color: #b7c1cd;
+}
+
+.race-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.race-table th,
+.race-table td {
+    padding: 10px;
+    border-bottom: 1px solid #293340;
+    text-align: left;
+}
+
+.position {
+    font-weight: bold;
+    color: #ffd43b;
+}
+
+.weather {
+    color: #68b9ff;
+}
+
+.progress {
+    height: 14px;
+    background: #252e39;
+    border-radius: 20px;
+    overflow: hidden;
+    margin-top: 10px;
+}
+
+.progress div {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg,#ff304f,#ff9a3d);
+    transition: width .4s;
+}
+
+@media(max-width:900px) {
+    .dashboard {
+        grid-template-columns: 1fr;
+    }
+
+    .status {
+        grid-template-columns: repeat(2,1fr);
+    }
+}
+</style>
 </head>
+
 <body>
 
-<div class="game-container">
-    <h2>🏎️ Pitwall Manager: Race Control</h2>
-    
-    <div class="track" id="trackView">🏁 . . . 🚗 . . . 🏁</div>
+<header>
+    <div class="logo">🏎️ PITWALL MANAGER</div>
+    <div class="money">💰 $<span id="money">50000</span></div>
+</header>
 
-    <div class="stats">
-        <div class="stat-box">Aylana: <span id="lap">1</span>/5</div>
-        <div class="stat-box">Shina: <span id="tyres">100</span>%</div>
-        <div class="stat-box">Yonilg'i: <span id="fuel">100</span>%</div>
-    </div>
+<div class="container">
 
-    <div>
-        <button id="btnPush" onclick="setStrategy('push')">Tezroq haydash (Push)</button>
-        <button id="btnNormal" onclick="setStrategy('normal')">Normal</button>
-        <button id="btnSave" onclick="setStrategy('save')">Tejamkor (Save)</button>
-    </div>
+<div class="dashboard">
 
-    <hr style="border-color: #444; margin: 20px 0;">
+<div class="card">
 
-    <div>
-        <button onclick="pitStop('soft')" id="btnSoft">Pit-stop: Soft (Tez)</button>
-        <button onclick="pitStop('medium')" id="btnMed">Pit-stop: Medium</button>
-        <button onclick="pitStop('fuel')" id="btnFuel">Faqat Yonilg'i quyish</button>
-    </div>
+<h2>🏁 Race Control</h2>
 
-    <div id="log">Poyga boshlandi! Strategiyani tanlang...</div>
+<div class="track">
+    <div class="car" id="car"></div>
 </div>
 
+<div class="status">
+
+<div class="stat">
+<small>Lap</small>
+<strong id="lap">1 / 20</strong>
+</div>
+
+<div class="stat">
+<small>Position</small>
+<strong id="position">8</strong>
+</div>
+
+<div class="stat">
+<small>Speed</small>
+<strong id="speed">210</strong>
+</div>
+
+<div class="stat">
+<small>Weather</small>
+<strong class="weather" id="weather">☀️ Dry</strong>
+</div>
+
+</div>
+
+<div style="margin-top:15px">
+Race Progress
+<div class="progress">
+<div id="raceProgress"></div>
+</div>
+</div>
+
+</div>
+
+
+<div class="card">
+
+<h2>🎧 Pit Wall Strategy</h2>
+
+<div class="strategy">
+
+<button class="primary" onclick="startRace()">
+▶ START / CONTINUE RACE
+</button>
+
+<button class="yellow" onclick="pitStop()">
+🔧 PIT STOP
+</button>
+
+<button class="blue" onclick="pushMode()">
+🔥 PUSH MODE
+</button>
+
+<button class="green" onclick="safeMode()">
+🟢 SAVE TYRES
+</button>
+
+</div>
+
+<br>
+
+<h2>🛞 Tyres</h2>
+
+<div class="tire">
+
+<button onclick="changeTire('Soft')">🔴 SOFT</button>
+<button onclick="changeTire('Medium')">🟡 MEDIUM</button>
+<button onclick="changeTire('Hard')">⚪ HARD</button>
+
+</div>
+
+<br>
+
+<div class="stat">
+Current tyre
+<strong id="tire">Medium</strong>
+</div>
+
+</div>
+
+
+<div class="card">
+
+<h2>👨‍✈️ Driver</h2>
+
+<div class="driver">
+
+<div class="driver-info">
+
+<div class="avatar">J</div>
+
+<div>
+<strong>Javlon Racing</strong>
+<br>
+<small>Rating: ⭐ 87</small>
+</div>
+
+</div>
+
+<div>
+⚡ <span id="driverEnergy">100</span>%
+</div>
+
+</div>
+
+<p>Driver Energy</p>
+
+<div class="bar">
+<div id="energyBar" style="width:100%"></div>
+</div>
+
+</div>
+
+
+<div class="card">
+
+<h2>📡 Team Radio</h2>
+
+<div class="log" id="log">
+
+<p>🏁 [SYSTEM] Pit wall ready.</p>
+<p>📡 [RADIO] Driver is waiting...</p>
+<p>🛞 [TYRE] Medium tyres fitted.</p>
+
+</div>
+
+</div>
+
+
+<div class="card">
+
+<h2>🏆 Live Standings</h2>
+
+<table class="race-table">
+
+<thead>
+<tr>
+<th>Pos</th>
+<th>Driver</th>
+<th>Team</th>
+<th>Gap</th>
+</tr>
+</thead>
+
+<tbody id="standings">
+
+<tr>
+<td class="position">1</td>
+<td>Max</td>
+<td>Red Wolf</td>
+<td>-</td>
+</tr>
+
+<tr>
+<td>2</td>
+<td>Lewis</td>
+<td>Silver GP</td>
+<td>+1.2s</td>
+</tr>
+
+<tr>
+<td>3</td>
+<td>Charles</td>
+<td>Scuderia</td>
+<td>+2.8s</td>
+</tr>
+
+<tr>
+<td>4</td>
+<td>Oscar</td>
+<td>Orange</td>
+<td>+4.1s</td>
+</tr>
+
+<tr>
+<td>5</td>
+<td>Lando</td>
+<td>Green Racing</td>
+<td>+5.7s</td>
+</tr>
+
+<tr>
+<td>6</td>
+<td>Javlon</td>
+<td>Javlon Racing</td>
+<td>+7.1s</td>
+</tr>
+
+</tbody>
+
+</table>
+
+</div>
+
+</div>
+
+</div>
+
+
 <script>
-    let lap = 1;
-    let tyres = 100;
-    let fuel = 100;
-    let strategy = 'normal';
-    let isRacing = true;
 
-    const logDiv = document.getElementById('log');
+let lap = 1;
+let totalLaps = 20;
 
-    function addLog(text) {
-        logDiv.innerHTML += `<br>` + text;
-        logDiv.scrollTop = logDiv.scrollHeight;
+let position = 8;
+let speed = 210;
+
+let money = 50000;
+let energy = 100;
+
+let tire = "Medium";
+
+let raceRunning = false;
+let raceTimer = null;
+
+const car = document.getElementById("car");
+
+function log(message) {
+
+    const box = document.getElementById("log");
+
+    const p = document.createElement("p");
+
+    p.textContent = message;
+
+    box.appendChild(p);
+
+    box.scrollTop = box.scrollHeight;
+}
+
+
+function updateUI() {
+
+    document.getElementById("lap").textContent =
+        lap + " / " + totalLaps;
+
+    document.getElementById("position").textContent =
+        position;
+
+    document.getElementById("speed").textContent =
+        Math.round(speed);
+
+    document.getElementById("money").textContent =
+        money;
+
+    document.getElementById("tire").textContent =
+        tire;
+
+    document.getElementById("driverEnergy").textContent =
+        Math.round(energy);
+
+    document.getElementById("energyBar").style.width =
+        energy + "%";
+
+    let progress =
+        ((lap - 1) / totalLaps) * 100;
+
+    document.getElementById("raceProgress").style.width =
+        progress + "%";
+}
+
+
+function moveCar() {
+
+    let x = Math.random() * 80 + 10;
+    let y = Math.random() * 70 + 10;
+
+    car.style.left = x + "%";
+    car.style.top = y + "%";
+}
+
+
+function startRace() {
+
+    if (raceRunning) {
+
+        log("⚠️ [RACE] Race already running.");
+
+        return;
     }
 
-    function setStrategy(strat) {
-        strategy = strat;
-        addLog(`Strategiya o'zgartirildi: ${strat.toUpperCase()}`);
-    }
+    raceRunning = true;
 
-    function pitStop(type) {
-        if (!isRacing) return;
-        
-        if (type === 'soft') {
-            tyres = 100;
-            fuel = Math.min(100, fuel + 30);
-            addLog("🔧 Pit-stop: Yangi Soft shinalar taqildi va yonilg'i qo'shildi! (-3 soniya vaqt)");
-        } else if (type === 'medium') {
-            tyres = 100;
-            fuel = 100;
-            addLog("🔧 Pit-stop: To'liq xizmat ko'rsatildi (Shina + To'liq yonilg'i)!");
-        } else if (type === 'fuel') {
-            fuel = 100;
-            addLog("⛽ Pit-stop: Faqat yonilg'i quyildi.");
-        }
-    }
+    log("🏁 [RACE] Race started!");
 
-    // Har 2 sekundda 1 aylana o'tadi
-    let gameInterval = setInterval(() => {
-        if (!isRacing) return;
+    raceTimer = setInterval(() => {
 
-        // Strategiyaga qarab resurslarning kamayishi
-        if (strategy === 'push') {
-            tyres -= 35;
-            fuel -= 30;
-            addLog(`Aylana ${lap}: Qattiq bosilyapti! 💨`);
-        } else if (strategy === 'normal') {
-            tyres -= 20;
-            fuel -= 20;
-            addLog(`Aylana ${lap}: Normal sur’atda davom etmoqda.`);
-        } else if (strategy === 'save') {
-            tyres -= 10;
-            fuel -= 12;
-            addLog(`Aylana ${lap}: Resurslar tejalmoqda 🛡️`);
+        if (lap >= totalLaps) {
+
+            finishRace();
+
+            return;
         }
 
-        // Resurslar tugab qolsa
-        if (tyres <= 0) {
-            tyres = 0;
-            addLog("❌ Shinalar yaroqsiz holatga keldi! Mashina sekinlashdi.");
-            tyres = 10; // jarima bilan biroz tiklanadi
-        }
-        if (fuel <= 0) {
-            fuel = 0;
-            isRacing = false;
-            addLog("⛽ Yonilg'i tugadi! Poyga tugadi (DNF). ❌");
-            document.querySelectorAll('button').forEach(b => b.disabled = true);
+        lap++;
+
+        moveCar();
+
+        let random = Math.random();
+
+        if (random > .65) {
+
+            position--;
+
+            if (position < 1)
+                position = 1;
+
+            log(
+                "🟢 [RACE] Great lap! Position gained."
+            );
+
+        } else if (random < .25) {
+
+            position++;
+
+            if (position > 20)
+                position = 20;
+
+            log(
+                "🔴 [RACE] Traffic ahead. Position lost."
+            );
         }
 
-        // Ekranlarni yangilash
-        document.getElementById('lap').innerText = lap;
-        document.getElementById('tyres').innerText = Math.max(0, tyres);
-        document.getElementById('fuel').innerText = Math.max(0, fuel);
+        energy -= Math.random() * 4;
 
-        if (lap >= 5 && isRacing) {
-            isRacing = false;
-            addLog("🏆 Tabriklaymiz! Mashina marraga muvaffaqiyatli yetib keldi!");
-            document.querySelectorAll('button').forEach(b => b.disabled = true);
-        } else {
-            lap++;
-        }
+        if (energy < 0)
+            energy = 0;
+
+        if (tire === "Soft")
+            speed += 2;
+
+        if (tire === "Hard")
+            speed -= 1;
+
+        if (tire === "Medium")
+            speed += .5;
+
+        updateUI();
 
     }, 2500);
+}
+
+
+function finishRace() {
+
+    clearInterval(raceTimer);
+
+    raceRunning = false;
+
+    document.getElementById("raceProgress").style.width =
+        "100%";
+
+    let reward = 0;
+
+    if (position === 1)
+        reward = 50000;
+    else if (position <= 3)
+        reward = 30000;
+    else if (position <= 10)
+        reward = 15000;
+    else
+        reward = 5000;
+
+    money += reward;
+
+    log(
+        "🏆 [FINISH] Race finished! Position: P"
+        + position
+    );
+
+    log(
+        "💰 [REWARD] +$" + reward
+    );
+
+    updateUI();
+}
+
+
+function pitStop() {
+
+    if (!raceRunning) {
+
+        log("⚠️ [PIT] Start the race first.");
+
+        return;
+    }
+
+    log("🔧 [PIT] Entering pit lane...");
+
+    clearInterval(raceTimer);
+
+    raceRunning = false;
+
+    setTimeout(() => {
+
+        speed -= 25;
+
+        energy += 10;
+
+        if (energy > 100)
+            energy = 100;
+
+        money -= 1500;
+
+        log("🔧 [PIT] Tyres changed.");
+
+        log("💸 [PIT] Pit cost: $1500");
+
+        updateUI();
+
+    }, 1800);
+}
+
+
+function changeTire(type) {
+
+    tire = type;
+
+    if (type === "Soft") {
+
+        speed = 225;
+
+        log("🔴 [TYRE] Soft tyres selected.");
+
+    }
+
+    if (type === "Medium") {
+
+        speed = 210;
+
+        log("🟡 [TYRE] Medium tyres selected.");
+
+    }
+
+    if (type === "Hard") {
+
+        speed = 195;
+
+        log("⚪ [TYRE] Hard tyres selected.");
+
+    }
+
+    updateUI();
+}
+
+
+function pushMode() {
+
+    if (!raceRunning) {
+
+        log("⚠️ [STRATEGY] Start race first.");
+
+        return;
+    }
+
+    speed += 20;
+
+    energy -= 8;
+
+    if (energy < 0)
+        energy = 0;
+
+    log(
+        "🔥 [STRATEGY] PUSH! Driver attacking."
+    );
+
+    updateUI();
+}
+
+
+function safeMode() {
+
+    if (!raceRunning) {
+
+        log("⚠️ [STRATEGY] Start race first.");
+
+        return;
+    }
+
+    speed -= 10;
+
+    energy += 6;
+
+    if (energy > 100)
+        energy = 100;
+
+    log(
+        "🟢 [STRATEGY] Saving tyres and energy."
+    );
+
+    updateUI();
+}
+
+
+function randomWeather() {
+
+    const weather = [
+        "☀️ Dry",
+        "☀️ Sunny",
+        "☁️ Cloudy",
+        "🌧️ Rain"
+    ];
+
+    let selected =
+        weather[Math.floor(Math.random() * weather.length)];
+
+    document.getElementById("weather").textContent =
+        selected;
+
+    if (selected.includes("Rain")) {
+
+        speed -= 20;
+
+        log(
+            "🌧️ [WEATHER] Rain detected! Consider wet strategy."
+        );
+    }
+}
+
+
+setInterval(randomWeather, 15000);
+
+moveCar();
+
+updateUI();
+
 </script>
 
 </body>
 </html>
+```
