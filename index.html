@@ -1,464 +1,2126 @@
---[[
-	PITWALL MANAGER — original Luau implementatsiya (server tomoni)
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-	O'rnatish:
-	  - Bu skriptni ServerScriptService'ga Script sifatida joylang.
-	  - ReplicatedStorage'da "PitWallRemotes" papkasi avtomatik yaratiladi.
+<title>O‘zbekiston — Buyuk Yurt</title>
 
-	O'yin g'oyasi:
-	  - Siz bitta jamoaning pit-wall strategisi bo'lasiz.
-	  - Haydovchilarga tezlik rejimi (Push/Normal/Save), shina tanlash
-	    va pit-stop buyruqlarini berasiz.
-	  - Ob-havo o'zgaradi — to'g'ri shinani to'g'ri vaqtda qo'yish g'alaba keltiradi.
-]]
+<meta name="description"
+content="O‘zbekiston haqida tarix, madaniyat, shaharlar, tabiat, turizm, taomlar va mashhur obidalar.">
 
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Players = game:GetService("Players")
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Playfair+Display:wght@600;700;800&display=swap');
 
--- ============================================================
---  REMOTES (avtomatik yaratiladi)
--- ============================================================
-local remotesFolder = ReplicatedStorage:FindFirstChild("PitWallRemotes")
-if not remotesFolder then
-	remotesFolder = Instance.new("Folder")
-	remotesFolder.Name = "PitWallRemotes"
-	remotesFolder.Parent = ReplicatedStorage
-end
-
-local function ensureRemote(name, className)
-	local remote = remotesFolder:FindFirstChild(name)
-	if not remote then
-		remote = Instance.new(className)
-		remote.Name = name
-		remote.Parent = remotesFolder
-	end
-	return remote
-end
-
-local syncEvent    = ensureRemote("SyncState", "RemoteEvent")
-local commandEvent = ensureRemote("PitCommand", "RemoteEvent")
-local startEvent   = ensureRemote("StartRace", "RemoteEvent")
-local chooseEvent  = ensureRemote("ChooseTeam", "RemoteEvent")
-
--- ============================================================
---  KONFIGURATSIYA
--- ============================================================
-local RACE = {
-	baseLap  = 95,  -- mos yozuv vaqti (sekund)
-	laps     = 30,  -- poyga davomiyligi
-	pitLoss  = 24,  -- pit-stopda yo'qotiladigan vaqt (sekund)
-	lapTick  = 6,   -- har bir simulyatsiya qilingan davr orasidagi real vaqt (sekund)
-	variance = 0.6, -- har davr uchun tasodifiy tebranish (sekund)
+:root{
+    --blue:#0877d1;
+    --dark:#071522;
+    --dark2:#0d2234;
+    --white:#ffffff;
+    --muted:#667788;
+    --gold:#e5a82e;
+    --light:#f4f8fb;
+    --card:#ffffff;
+    --shadow:0 15px 45px rgba(4,28,48,.10);
+    --radius:24px;
 }
 
--- Shinalar: speed = qanchalik sekin (0 = eng tez), wetGrip = yomg'irda qanchalik yaxshi
-local COMPOUNDS = {
-	Soft   = { speed = 0.000, wear = 1.55, wetGrip = 0.30 },
-	Medium = { speed = 0.006, wear = 1.00, wetGrip = 0.42 },
-	Hard   = { speed = 0.012, wear = 0.62, wetGrip = 0.52 },
-	Inter  = { speed = 0.028, wear = 0.72, wetGrip = 0.80 },
-	Wet    = { speed = 0.055, wear = 0.95, wetGrip = 1.00 },
+*{
+    margin:0;
+    padding:0;
+    box-sizing:border-box;
+    scroll-behavior:smooth;
 }
 
--- Har bir shina turi uchun davr boshiga eskirish foizi
-local BASE_WEAR = { Soft = 6.5, Medium = 4.2, Hard = 2.8, Inter = 3.5, Wet = 4.5 }
-
-local PACE_MULT = {
-	Push   = { time = 0.993, wearMult = 1.35 },
-	Normal = { time = 1.000, wearMult = 1.00 },
-	Save   = { time = 1.009, wearMult = 0.65 },
+body{
+    font-family:Inter,Arial,sans-serif;
+    background:var(--light);
+    color:var(--dark);
+    line-height:1.65;
 }
 
--- Ob-havo jadvali: har segment necha davr davom etadi va ho'llik darajasi (0..1)
-local WEATHER_SEGMENTS = {
-	{ laps = 10, wet = 0.05 },  -- quruq start
-	{ laps = 6,  wet = 0.65 },  -- yomg'ir
-	{ laps = 5,  wet = 0.30 },  -- quriy boshlaydi
-	{ laps = 9,  wet = 0.05 },  -- quruq finish
+img{
+    max-width:100%;
+    display:block;
 }
 
-local POINTS = { 25, 18, 15, 12, 10, 8, 6, 4, 2, 1 }
-
--- Jamoalar va haydovchilar (fiktiv ismlar)
-local TEAM_DEFS = {
-	{ name = "Velocity Racing", color = Color3.fromRGB(220, 40, 40), drivers = {
-		{ name = "Liam Carter",  skill = 90, tireSave = 78, aggression = 55 },
-		{ name = "Niko Berg",    skill = 84, tireSave = 70, aggression = 65 },
-	} },
-	{ name = "Apex Motorsport", color = Color3.fromRGB(30, 120, 220), drivers = {
-		{ name = "Dante Rossi",  skill = 88, tireSave = 72, aggression = 72 },
-		{ name = "Yuki Tanaka",  skill = 82, tireSave = 80, aggression = 45 },
-	} },
-	{ name = "Falcon GP", color = Color3.fromRGB(240, 180, 30), drivers = {
-		{ name = "Marcus Webb",  skill = 86, tireSave = 66, aggression = 60 },
-		{ name = "Sofia Marin",  skill = 83, tireSave = 74, aggression = 58 },
-	} },
-	{ name = "Nova Engineering", color = Color3.fromRGB(80, 200, 120), drivers = {
-		{ name = "Alex Petrov",  skill = 85, tireSave = 68, aggression = 62 },
-		{ name = "Jules Moreau", skill = 80, tireSave = 76, aggression = 50 },
-	} },
-	{ name = "Titan Racing", color = Color3.fromRGB(160, 90, 200), drivers = {
-		{ name = "Omar Haddad",  skill = 87, tireSave = 60, aggression = 75 },
-		{ name = "Leo Fischer",  skill = 81, tireSave = 71, aggression = 55 },
-	} },
+button{
+    font-family:inherit;
 }
 
--- ============================================================
---  POYGA HOLATI
--- ============================================================
-local race = {
-	status = "waiting",    -- "waiting" | "running" | "finished"
-	lap = 0,
-	weather = "Dry",
-	weatherNote = "",
-	wet = 0.05,
-	forecast = {},         -- davr bo'yicha ho'llik prognozi
-	drivers = {},          -- haydovchilarning runtime holati
-	controller = nil,      -- o'yinni boshqarayotgan Player
-	teamIndex = 1,
+.container{
+    width:min(1180px,92%);
+    margin:auto;
 }
 
-local function buildDrivers()
-	race.drivers = {}
-	for ti, team in ipairs(TEAM_DEFS) do
-		for _, def in ipairs(team.drivers) do
-			table.insert(race.drivers, {
-				name = def.name,
-				team = team.name,
-				teamIndex = ti,
-				color = team.color,
-				skill = def.skill,
-				tireSave = def.tireSave,
-				aggression = def.aggression,
-				playerControlled = false,
-				compound = "Soft",
-				wear = 0,
-				pace = "Normal",
-				pitOrder = nil,   -- { compound = "Hard" } kabi bo'lsa, keyingi davr box
-				lastLap = 0,
-				totalTime = 0,
-				fastest = math.huge,
-				lapTimes = {},
-				position = 0,
-				gap = 0,
-				finished = false,
-				points = 0,
-			})
-		end
-	end
-end
+/* ================= NAVBAR ================= */
 
-buildDrivers()
+.navbar{
+    position:fixed;
+    top:0;
+    left:0;
+    width:100%;
+    z-index:1000;
+    padding:15px 0;
+    transition:.3s;
+}
 
--- ============================================================
---  YORDAMCHI FUNKSIYALAR
--- ============================================================
-local function weatherLabel(wet)
-	if wet > 0.5 then return "RAIN" end
-	if wet > 0.25 then return "DRIZZLE" end
-	return "DRY"
-end
+.navbar.scrolled{
+    background:rgba(7,21,34,.94);
+    backdrop-filter:blur(15px);
+    box-shadow:0 5px 30px rgba(0,0,0,.18);
+}
 
-local function buildForecast()
-	local forecast = {}
-	local lap = 0
-	for _, seg in ipairs(WEATHER_SEGMENTS) do
-		for _ = 1, seg.laps do
-			lap += 1
-			forecast[lap] = seg.wet
-		end
-	end
-	for i = lap + 1, RACE.laps do
-		forecast[i] = 0.05
-	end
-	return forecast
-end
+.nav-inner{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+}
 
-local function findDriver(name)
-	for _, d in ipairs(race.drivers) do
-		if d.name == name then return d end
-	end
-	return nil
-end
+.logo{
+    color:white;
+    text-decoration:none;
+    display:flex;
+    align-items:center;
+    gap:10px;
+    font-size:21px;
+    font-weight:800;
+}
 
-local function findTeammate(d)
-	for _, other in ipairs(race.drivers) do
-		if other ~= d and other.teamIndex == d.teamIndex then
-			return other
-		end
-	end
-	return nil
-end
+.flag{
+    width:35px;
+    height:24px;
+    border-radius:5px;
+    overflow:hidden;
+    box-shadow:0 2px 10px rgba(0,0,0,.3);
+}
 
--- Bir davr vaqtini hisoblash
-local function calcLapTime(d, lap)
-	local compound = COMPOUNDS[d.compound]
-	local pace = PACE_MULT[d.pace]
+.flag span{
+    display:block;
+    height:8px;
+}
 
-	-- Yomg'ir: ho'lik trackda yomon wetGrip'li shina sekinlashtiradi
-	local wetPenalty = (1 - compound.wetGrip) * race.wet * 0.9
-	-- Yomg'irda hamma sekinroq
-	local weatherSlowdown = race.wet * 1.2
+.flag .a{background:#1d9be0}
+.flag .b{background:white}
+.flag .c{background:#1ca65b}
 
-	local t = RACE.baseLap
-	t += (100 - d.skill) * 0.05            -- haydovchi mahorati
-	t += compound.speed * RACE.baseLap     -- shina tezligi
-	t += (d.wear / 100) * 0.4              -- shina eskirishi
-	t += wetPenalty
-	t += weatherSlowdown
-	t *= pace.time
-	t -= (d.aggression - 50) * 0.004       -- agressiv haydovchilar biroz tezroq
-	t += (math.random() * 2 - 1) * RACE.variance -- tasodifiy tebranish
+.nav-links{
+    display:flex;
+    gap:7px;
+    list-style:none;
+}
 
-	return math.max(50, t)
-end
+.nav-links a{
+    color:white;
+    text-decoration:none;
+    padding:9px 13px;
+    border-radius:12px;
+    font-size:13px;
+    transition:.2s;
+}
 
--- Shina eskirishini qo'llash
-local function applyWear(d)
-	local wearRate = BASE_WEAR[d.compound]
-		* PACE_MULT[d.pace].wearMult
-		* (1 - d.tireSave / 100 * 0.3)      -- shinani tejaydigan haydovchilar kamroq eskiradi
-		* (1 + (d.aggression - 50) / 100 * 0.3)
-	d.wear = math.min(100, d.wear + wearRate)
-end
+.nav-links a:hover{
+    background:rgba(255,255,255,.14);
+}
 
--- AI haydovchi qarorlari
-local function aiDecide(d)
-	if race.status ~= "running" or d.finished then return end
+.menu-btn{
+    display:none;
+    background:none;
+    border:0;
+    color:white;
+    font-size:27px;
+    cursor:pointer;
+}
 
-	-- Ob-havoga mos shina tanlash
-	if race.wet > 0.5 and d.compound ~= "Wet" then
-		d.pitOrder = { compound = "Wet" }
-	elseif race.wet > 0.25 and d.compound ~= "Inter" and d.compound ~= "Wet" then
-		d.pitOrder = { compound = "Inter" }
-	elseif race.wet <= 0.15 and (d.compound == "Inter" or d.compound == "Wet") then
-		d.pitOrder = { compound = "Medium" }
-	end
+/* ================= HERO ================= */
 
-	-- Shina juda eskirgan bo'lsa — box
-	if d.wear > 75 and not d.pitOrder then
-		local nextCompound = race.wet > 0.25 and (race.wet > 0.5 and "Wet" or "Inter") or "Medium"
-		d.pitOrder = { compound = nextCompound }
-	end
+.hero{
+    min-height:100vh;
+    position:relative;
+    color:white;
+    display:flex;
+    align-items:center;
+    overflow:hidden;
+    background:
+        linear-gradient(90deg,rgba(3,17,28,.88),rgba(3,17,28,.43),rgba(3,17,28,.20)),
+        url("https://images.unsplash.com/photo-1564507592333-c60657eea523?auto=format&fit=crop&w=2200&q=90")
+        center/cover;
+}
 
-	-- Tezlik rejimi
-	if d.position <= 2 then
-		d.pace = "Normal"
-	elseif d.position > 8 then
-		d.pace = "Push"
-	else
-		d.pace = "Normal"
-	end
-	if math.random() < 0.05 then
-		d.pace = "Push"
-	end
-end
+.hero-content{
+    padding-top:70px;
+    max-width:760px;
+}
 
--- Bitta davrni simulyatsiya qilish
-local function simulateLap(d, lap)
-	local t = calcLapTime(d, lap)
+.hero-small{
+    display:inline-flex;
+    align-items:center;
+    gap:8px;
+    background:rgba(255,255,255,.13);
+    border:1px solid rgba(255,255,255,.2);
+    padding:9px 15px;
+    border-radius:30px;
+    backdrop-filter:blur(10px);
+    margin-bottom:25px;
+    font-size:13px;
+}
 
-	-- Pit-stop: buyruq berilgan bo'lsa, shu davrda box qiladi
-	if d.pitOrder then
-		t += RACE.pitLoss
-		d.compound = d.pitOrder.compound
-		d.wear = 0
-		d.pitOrder = nil
-	end
+.hero h1{
+    font-family:"Playfair Display",serif;
+    font-size:clamp(48px,8vw,94px);
+    line-height:1;
+    margin-bottom:25px;
+}
 
-	d.lastLap = t
-	d.totalTime += t
-	d.lapTimes[lap] = t
-	if t < d.fastest then d.fastest = t end
+.hero h1 span{
+    color:#58b9ff;
+}
 
-	applyWear(d)
-end
+.hero p{
+    max-width:650px;
+    font-size:18px;
+    color:#e5edf4;
+}
 
--- O'rinlarni yangilash
-local function updatePositions()
-	table.sort(race.drivers, function(a, b)
-		if a.finished ~= b.finished then return a.finished end
-		return a.totalTime < b.totalTime
-	end)
-	local leader = race.drivers[1]
-	for i, d in ipairs(race.drivers) do
-		d.position = i
-		d.gap = math.floor((d.totalTime - leader.totalTime) * 100) / 100
-	end
-end
+.hero-buttons{
+    margin-top:35px;
+    display:flex;
+    flex-wrap:wrap;
+    gap:13px;
+}
 
--- ============================================================
---  BROADCAST (client'ga yuborish)
--- ============================================================
-local function serialize()
-	local out = {
-		status = race.status,
-		lap = race.lap,
-		laps = RACE.laps,
-		weather = race.weather,
-		weatherNote = race.weatherNote,
-		forecast = race.forecast,
-		teamIndex = race.teamIndex,
-		drivers = {},
-	}
-	for _, d in ipairs(race.drivers) do
-		table.insert(out.drivers, {
-			name = d.name,
-			team = d.team,
-			color = { d.color.R, d.color.G, d.color.B },
-			playerControlled = d.playerControlled,
-			compound = d.compound,
-			wear = math.floor(d.wear),
-			pace = d.pace,
-			pitPending = d.pitOrder ~= nil,
-			lastLap = math.floor(d.lastLap * 100) / 100,
-			fastest = d.fastest == math.huge and 0 or math.floor(d.fastest * 100) / 100,
-			gap = d.gap,
-			position = d.position,
-			finished = d.finished,
-			points = d.points,
-		})
-	end
-	return out
-end
+.btn{
+    border:0;
+    cursor:pointer;
+    padding:14px 22px;
+    border-radius:14px;
+    font-weight:700;
+    text-decoration:none;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    gap:8px;
+    transition:.25s;
+}
 
-local function broadcast()
-	syncEvent:FireAllClients(serialize())
-end
+.btn-primary{
+    background:#1595e8;
+    color:white;
+    box-shadow:0 10px 25px rgba(21,149,232,.3);
+}
 
--- ============================================================
---  POYGA BOSHQARUVI
--- ============================================================
-local function startRace()
-	if race.status ~= "waiting" then return end
+.btn-primary:hover{
+    transform:translateY(-3px);
+}
 
-	race.status = "running"
-	race.lap = 0
-	race.wet = 0.05
-	race.weather = "Dry"
-	race.weatherNote = ""
-	race.forecast = buildForecast()
+.btn-light{
+    background:white;
+    color:#0a2335;
+}
 
-	for _, d in ipairs(race.drivers) do
-		d.compound = "Soft"
-		d.wear = 0
-		d.pace = "Normal"
-		d.pitOrder = nil
-		d.lastLap = 0
-		d.totalTime = 0
-		d.fastest = math.huge
-		d.lapTimes = {}
-		d.position = 0
-		d.gap = 0
-		d.finished = false
-		d.points = 0
-	end
+.btn-light:hover{
+    transform:translateY(-3px);
+}
 
-	broadcast()
-end
+.hero-scroll{
+    position:absolute;
+    bottom:25px;
+    left:50%;
+    transform:translateX(-50%);
+    opacity:.75;
+    font-size:13px;
+}
 
--- ============================================================
---  ASOSIY SIMULYATSIYA SIKLI
--- ============================================================
-task.spawn(function()
-	while true do
-		task.wait(RACE.lapTick)
+/* ================= GENERAL ================= */
 
-		if race.status ~= "running" then continue end
+section{
+    padding:95px 0;
+}
 
-		race.lap += 1
-		race.wet = race.forecast[race.lap] or 0.05
+.section-head{
+    text-align:center;
+    max-width:760px;
+    margin:0 auto 50px;
+}
 
-		local newWeather = weatherLabel(race.wet)
-		if newWeather ~= race.weather then
-			race.weather = newWeather
-			race.weatherNote = "WEATHER CHANGE: " .. newWeather .. "!"
-		else
-			race.weatherNote = ""
-		end
+.eyebrow{
+    color:var(--blue);
+    text-transform:uppercase;
+    font-weight:800;
+    font-size:12px;
+    letter-spacing:2px;
+    margin-bottom:10px;
+}
 
-		for _, d in ipairs(race.drivers) do
-			if d.finished then continue end
-			if not d.playerControlled then aiDecide(d) end
-			simulateLap(d, race.lap)
-			if race.lap >= RACE.laps then d.finished = true end
-		end
+.section-head h2{
+    font-family:"Playfair Display",serif;
+    font-size:clamp(34px,5vw,55px);
+    line-height:1.1;
+    margin-bottom:15px;
+}
 
-		updatePositions()
+.section-head p{
+    color:var(--muted);
+}
 
-		if race.lap >= RACE.laps then
-			race.status = "finished"
-			for i, d in ipairs(race.drivers) do
-				d.points = POINTS[i] or 0
-				d.finished = true
-			end
-		end
+/* ================= STATS ================= */
 
-		broadcast()
-	end
-end)
+.stats{
+    margin-top:-65px;
+    position:relative;
+    z-index:10;
+}
 
--- ============================================================
---  REMOTE EVENT LAR
--- ============================================================
-chooseEvent.OnServerEvent:Connect(function(plr, teamIndex)
-	if race.status ~= "waiting" then return end
-	teamIndex = math.clamp(teamIndex or 1, 1, #TEAM_DEFS)
+.stats-grid{
+    display:grid;
+    grid-template-columns:repeat(4,1fr);
+    background:white;
+    border-radius:25px;
+    box-shadow:var(--shadow);
+    overflow:hidden;
+}
 
-	race.controller = plr
-	race.teamIndex = teamIndex
-	for _, d in ipairs(race.drivers) do
-		d.playerControlled = (d.teamIndex == teamIndex)
-	end
-	broadcast()
-end)
+.stat{
+    padding:30px 20px;
+    text-align:center;
+    border-right:1px solid #e9eef2;
+}
 
-startEvent.OnServerEvent:Connect(function(plr)
-	if plr ~= race.controller then return end
-	startRace()
-end)
+.stat:last-child{
+    border-right:0;
+}
 
-commandEvent.OnServerEvent:Connect(function(plr, driverName, command, value)
-	if race.status ~= "running" then return end
-	local d = findDriver(driverName)
-	if not d or not d.playerControlled then return end
+.stat strong{
+    display:block;
+    color:var(--blue);
+    font-size:30px;
+    font-weight:800;
+}
 
-	if command == "pace" then
-		if value == "Push" or value == "Normal" or value == "Save" then
-			d.pace = value
-		end
-	elseif command == "pit" then
-		if COMPOUNDS[value] then
-			d.pitOrder = { compound = value }
-		end
-	elseif command == "swap" then
-		-- Jamoa buyrug'i: yaqin bo'lgan haydovchilar o'rin almashadi
-		local mate = findTeammate(d)
-		if mate and not mate.finished and not d.finished then
-			local diff = d.totalTime - mate.totalTime
-			if math.abs(diff) < 3 then
-				local leader, follower = d, mate
-				if diff < 0 then leader, follower = mate, d end
-				leader.totalTime += 0.5
-				follower.totalTime -= 0.4
-				updatePositions()
-			end
-		end
-	end
+.stat span{
+    font-size:13px;
+    color:var(--muted);
+}
 
-	broadcast()
-end)
+/* ================= INTRO ================= */
 
--- Yangi o'yinchi kelganda holatni yuborish
-Players.PlayerAdded:Connect(function(plr)
-	if race.status == "waiting" and not race.controller then
-		-- Birinchi kelgan o'yinchi avtomatik 1-jamoani boshqaradi
-		race.controller = plr
-		race.teamIndex = 1
-		for _, d in ipairs(race.drivers) do
-			d.playerControlled = (d.teamIndex == 1)
-		end
-	end
-	task.wait(1)
-	syncEvent:FireClient(plr, serialize())
-end)
+.intro-grid{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:55px;
+    align-items:center;
+}
+
+.intro-image{
+    border-radius:30px;
+    overflow:hidden;
+    box-shadow:var(--shadow);
+    position:relative;
+}
+
+.intro-image img{
+    width:100%;
+    height:520px;
+    object-fit:cover;
+}
+
+.intro-image::after{
+    content:"O‘zbekiston";
+    position:absolute;
+    bottom:20px;
+    left:20px;
+    background:rgba(0,0,0,.65);
+    color:white;
+    padding:10px 18px;
+    border-radius:12px;
+    backdrop-filter:blur(10px);
+}
+
+.intro-text h3{
+    font-family:"Playfair Display",serif;
+    font-size:38px;
+    margin-bottom:20px;
+}
+
+.intro-text p{
+    color:#566674;
+    margin-bottom:18px;
+}
+
+.info-list{
+    list-style:none;
+    margin-top:25px;
+}
+
+.info-list li{
+    padding:12px 0;
+    border-bottom:1px solid #dde5ea;
+}
+
+.info-list b{
+    color:var(--dark);
+}
+
+/* ================= COLLAPSIBLE ================= */
+
+.more-content{
+    max-height:0;
+    overflow:hidden;
+    opacity:0;
+    transition:max-height .55s ease,opacity .35s ease;
+}
+
+.more-content.open{
+    max-height:1500px;
+    opacity:1;
+}
+
+.more-btn{
+    margin-top:20px;
+    background:#edf6fc;
+    color:#0877d1;
+    border:1px solid #cce8fa;
+    padding:11px 17px;
+    border-radius:12px;
+    cursor:pointer;
+    font-weight:700;
+    transition:.2s;
+}
+
+.more-btn:hover{
+    background:#0877d1;
+    color:white;
+}
+
+/* ================= CARDS ================= */
+
+.cards{
+    display:grid;
+    grid-template-columns:repeat(3,1fr);
+    gap:24px;
+}
+
+.card{
+    background:var(--card);
+    border-radius:var(--radius);
+    overflow:hidden;
+    box-shadow:0 8px 30px rgba(4,28,48,.07);
+    transition:.3s;
+}
+
+.card:hover{
+    transform:translateY(-7px);
+    box-shadow:var(--shadow);
+}
+
+.card-image{
+    height:230px;
+    overflow:hidden;
+}
+
+.card-image img{
+    width:100%;
+    height:100%;
+    object-fit:cover;
+    transition:.5s;
+}
+
+.card:hover .card-image img{
+    transform:scale(1.07);
+}
+
+.card-body{
+    padding:25px;
+}
+
+.tag{
+    display:inline-block;
+    color:#0877d1;
+    background:#eaf6ff;
+    padding:6px 10px;
+    border-radius:8px;
+    font-size:11px;
+    font-weight:800;
+    text-transform:uppercase;
+    margin-bottom:12px;
+}
+
+.card h3{
+    font-size:23px;
+    margin-bottom:10px;
+}
+
+.card p{
+    color:var(--muted);
+    font-size:14px;
+}
+
+/* ================= CITIES ================= */
+
+.cities{
+    background:white;
+}
+
+.city-card{
+    position:relative;
+}
+
+.city-card .card-image{
+    height:300px;
+}
+
+.city-overlay{
+    position:absolute;
+    left:0;
+    right:0;
+    bottom:0;
+    padding:28px 24px;
+    color:white;
+    background:linear-gradient(transparent,rgba(0,0,0,.88));
+}
+
+.city-overlay h3{
+    font-family:"Playfair Display",serif;
+    font-size:30px;
+}
+
+.city-overlay p{
+    color:#e6edf2;
+    font-size:13px;
+}
+
+/* ================= HISTORY ================= */
+
+.history{
+    background:#071522;
+    color:white;
+}
+
+.history .section-head p{
+    color:#aebdca;
+}
+
+.timeline{
+    position:relative;
+    max-width:900px;
+    margin:auto;
+}
+
+.timeline::before{
+    content:"";
+    position:absolute;
+    left:50%;
+    top:0;
+    bottom:0;
+    width:2px;
+    background:#20516f;
+    transform:translateX(-50%);
+}
+
+.timeline-item{
+    width:50%;
+    padding:15px 45px;
+    position:relative;
+}
+
+.timeline-item:nth-child(odd){
+    text-align:right;
+}
+
+.timeline-item:nth-child(even){
+    margin-left:50%;
+}
+
+.timeline-dot{
+    position:absolute;
+    top:30px;
+    width:14px;
+    height:14px;
+    border-radius:50%;
+    background:#38aef0;
+    border:3px solid #071522;
+    box-shadow:0 0 0 3px #38aef0;
+}
+
+.timeline-item:nth-child(odd) .timeline-dot{
+    right:-7px;
+}
+
+.timeline-item:nth-child(even) .timeline-dot{
+    left:-7px;
+}
+
+.timeline-box{
+    background:#10283b;
+    border:1px solid #1d4056;
+    padding:25px;
+    border-radius:18px;
+}
+
+.timeline-box h3{
+    color:#58b9ff;
+    margin-bottom:7px;
+}
+
+.timeline-box p{
+    color:#b7c7d3;
+    font-size:14px;
+}
+
+/* ================= PLACES ================= */
+
+.place-grid{
+    display:grid;
+    grid-template-columns:repeat(4,1fr);
+    gap:18px;
+}
+
+.place{
+    min-height:260px;
+    position:relative;
+    overflow:hidden;
+    border-radius:20px;
+    color:white;
+}
+
+.place img{
+    width:100%;
+    height:100%;
+    object-fit:cover;
+    position:absolute;
+    inset:0;
+    transition:.5s;
+}
+
+.place:hover img{
+    transform:scale(1.08);
+}
+
+.place::after{
+    content:"";
+    position:absolute;
+    inset:0;
+    background:linear-gradient(transparent,rgba(0,0,0,.82));
+}
+
+.place-content{
+    position:absolute;
+    z-index:2;
+    bottom:18px;
+    left:18px;
+    right:18px;
+}
+
+.place-content h3{
+    font-size:21px;
+}
+
+/* ================= FOOD ================= */
+
+.food{
+    background:#f0f6fa;
+}
+
+/* ================= CULTURE ================= */
+
+.culture-grid{
+    display:grid;
+    grid-template-columns:repeat(2,1fr);
+    gap:22px;
+}
+
+.culture-box{
+    padding:30px;
+    border-radius:22px;
+    background:white;
+    border:1px solid #e1eaf0;
+    transition:.25s;
+}
+
+.culture-box:hover{
+    transform:translateY(-4px);
+    box-shadow:var(--shadow);
+}
+
+.icon{
+    font-size:35px;
+    margin-bottom:15px;
+}
+
+.culture-box h3{
+    margin-bottom:8px;
+}
+
+.culture-box p{
+    color:var(--muted);
+}
+
+/* ================= NATURE ================= */
+
+.nature{
+    background:
+      linear-gradient(rgba(4,20,30,.72),rgba(4,20,30,.72)),
+      url("https://images.unsplash.com/photo-1519681393784-d120267933ba?auto=format&fit=crop&w=2000&q=85")
+      center/cover;
+    color:white;
+}
+
+.nature .section-head p{
+    color:#d1dde5;
+}
+
+/* ================= UNESCO ================= */
+
+.unesco{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:30px;
+}
+
+.unesco-box{
+    background:white;
+    padding:30px;
+    border-radius:22px;
+    box-shadow:0 8px 25px rgba(0,0,0,.06);
+}
+
+.unesco-box h3{
+    font-size:22px;
+    margin-bottom:15px;
+}
+
+.unesco-box ul{
+    list-style:none;
+}
+
+.unesco-box li{
+    padding:12px 0;
+    border-bottom:1px solid #e5ebef;
+}
+
+.unesco-box li:last-child{
+    border:0;
+}
+
+/* ================= GALLERY ================= */
+
+.gallery{
+    display:grid;
+    grid-template-columns:repeat(4,1fr);
+    grid-auto-rows:190px;
+    gap:13px;
+}
+
+.gallery-item{
+    overflow:hidden;
+    border-radius:18px;
+}
+
+.gallery-item img{
+    width:100%;
+    height:100%;
+    object-fit:cover;
+    transition:.5s;
+}
+
+.gallery-item:hover img{
+    transform:scale(1.08);
+}
+
+.gallery-item.big{
+    grid-column:span 2;
+    grid-row:span 2;
+}
+
+/* ================= FAQ ================= */
+
+.faq{
+    max-width:850px;
+    margin:auto;
+}
+
+.faq-item{
+    background:white;
+    border-radius:17px;
+    margin-bottom:12px;
+    overflow:hidden;
+    border:1px solid #e0e8ed;
+}
+
+.faq-question{
+    width:100%;
+    border:0;
+    background:white;
+    padding:20px;
+    text-align:left;
+    cursor:pointer;
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    font-weight:700;
+    font-size:15px;
+}
+
+.faq-answer{
+    max-height:0;
+    overflow:hidden;
+    transition:.4s;
+}
+
+.faq-answer p{
+    padding:0 20px 20px;
+    color:var(--muted);
+    font-size:14px;
+}
+
+/* ================= FOOTER ================= */
+
+footer{
+    background:#06131f;
+    color:white;
+    padding:60px 0 25px;
+}
+
+.footer-grid{
+    display:grid;
+    grid-template-columns:2fr 1fr 1fr;
+    gap:50px;
+    padding-bottom:40px;
+}
+
+footer h3{
+    margin-bottom:15px;
+}
+
+footer p,
+footer a{
+    color:#9db0bf;
+    text-decoration:none;
+    font-size:14px;
+}
+
+footer ul{
+    list-style:none;
+}
+
+footer li{
+    margin:8px 0;
+}
+
+.copyright{
+    padding-top:20px;
+    border-top:1px solid #183042;
+    text-align:center;
+    color:#718796;
+    font-size:12px;
+}
+
+/* ================= TOP BUTTON ================= */
+
+.top{
+    position:fixed;
+    right:20px;
+    bottom:20px;
+    width:45px;
+    height:45px;
+    border:0;
+    border-radius:50%;
+    background:#0877d1;
+    color:white;
+    cursor:pointer;
+    display:none;
+    z-index:900;
+    box-shadow:0 10px 25px rgba(0,0,0,.25);
+}
+
+.top.show{
+    display:block;
+}
+
+/* ================= MOBILE ================= */
+
+@media(max-width:900px){
+
+    .nav-links{
+        display:none;
+        position:absolute;
+        top:70px;
+        left:4%;
+        right:4%;
+        background:#081b2a;
+        padding:15px;
+        border-radius:18px;
+        flex-direction:column;
+    }
+
+    .nav-links.active{
+        display:flex;
+    }
+
+    .menu-btn{
+        display:block;
+    }
+
+    .stats-grid{
+        grid-template-columns:repeat(2,1fr);
+    }
+
+    .stat:nth-child(2){
+        border-right:0;
+    }
+
+    .intro-grid,
+    .unesco{
+        grid-template-columns:1fr;
+    }
+
+    .cards{
+        grid-template-columns:repeat(2,1fr);
+    }
+
+    .place-grid{
+        grid-template-columns:repeat(2,1fr);
+    }
+
+    .gallery{
+        grid-template-columns:repeat(2,1fr);
+    }
+
+    .footer-grid{
+        grid-template-columns:1fr 1fr;
+    }
+}
+
+@media(max-width:600px){
+
+    section{
+        padding:70px 0;
+    }
+
+    .hero h1{
+        font-size:53px;
+    }
+
+    .hero p{
+        font-size:15px;
+    }
+
+    .stats{
+        margin-top:-35px;
+    }
+
+    .stats-grid{
+        grid-template-columns:1fr 1fr;
+    }
+
+    .stat{
+        padding:20px 10px;
+    }
+
+    .stat strong{
+        font-size:23px;
+    }
+
+    .cards,
+    .culture-grid,
+    .place-grid{
+        grid-template-columns:1fr;
+    }
+
+    .timeline::before{
+        left:7px;
+    }
+
+    .timeline-item,
+    .timeline-item:nth-child(even){
+        width:100%;
+        margin:0;
+        padding-left:35px;
+        padding-right:0;
+        text-align:left;
+    }
+
+    .timeline-item:nth-child(odd) .timeline-dot,
+    .timeline-item:nth-child(even) .timeline-dot{
+        left:0;
+        right:auto;
+    }
+
+    .gallery{
+        grid-template-columns:1fr 1fr;
+        grid-auto-rows:140px;
+    }
+
+    .gallery-item.big{
+        grid-column:span 2;
+        grid-row:span 1;
+    }
+
+    .footer-grid{
+        grid-template-columns:1fr;
+    }
+
+    .intro-image img{
+        height:350px;
+    }
+}
+</style>
+</head>
+
+<body>
+
+<!-- ================= NAVBAR ================= -->
+
+<header class="navbar" id="navbar">
+<div class="container nav-inner">
+
+<a href="#home" class="logo">
+    <div class="flag">
+        <span class="a"></span>
+        <span class="b"></span>
+        <span class="c"></span>
+    </div>
+    O'ZBEKISTON
+</a>
+
+<button class="menu-btn" id="menuBtn">☰</button>
+
+<ul class="nav-links" id="navLinks">
+    <li><a href="#about">O'zbekiston</a></li>
+    <li><a href="#cities">Shaharlar</a></li>
+    <li><a href="#history">Tarix</a></li>
+    <li><a href="#places">Obidalar</a></li>
+    <li><a href="#food">Taomlar</a></li>
+    <li><a href="#nature">Tabiat</a></li>
+    <li><a href="#gallery">Galereya</a></li>
+</ul>
+
+</div>
+</header>
+
+
+<!-- ================= HERO ================= -->
+
+<section class="hero" id="home">
+
+<div class="container hero-content">
+
+<div class="hero-small">
+    🇺🇿 Markaziy Osiyoning qadimiy yuragi
+</div>
+
+<h1>
+    O'zbekiston<br>
+    <span>Buyuk Yurt</span>
+</h1>
+
+<p>
+    Buyuk Ipak yo'li chorrahasida joylashgan, ming yillik
+    tarix, betakror me'morchilik, boy madaniyat va
+    ajoyib tabiatni birlashtirgan mamlakat.
+</p>
+
+<div class="hero-buttons">
+    <a href="#about" class="btn btn-primary">
+        O'zbekistonni kashf etish →
+    </a>
+
+    <a href="#gallery" class="btn btn-light">
+        📷 Galereyani ko'rish
+    </a>
+</div>
+
+</div>
+
+<div class="hero-scroll">
+    ↓ Pastga aylantiring
+</div>
+
+</section>
+
+
+<!-- ================= STATS ================= -->
+
+<div class="stats">
+<div class="container">
+
+<div class="stats-grid">
+
+<div class="stat">
+    <strong>448 900</strong>
+    <span>km² hudud</span>
+</div>
+
+<div class="stat">
+    <strong>Toshkent</strong>
+    <span>poytaxt</span>
+</div>
+
+<div class="stat">
+    <strong>8</strong>
+    <span>UNESCO World Heritage obyektlari</span>
+</div>
+
+<div class="stat">
+    <strong>UZS</strong>
+    <span>milliy valyuta — so'm</span>
+</div>
+
+</div>
+
+</div>
+</div>
+
+
+<!-- ================= ABOUT ================= -->
+
+<section id="about">
+
+<div class="container">
+
+<div class="section-head">
+    <div class="eyebrow">O'zbekiston haqida</div>
+    <h2>Sharq va G'arb chorrahasidagi yurt</h2>
+    <p>
+        O'zbekiston Markaziy Osiyoning markaziy qismida joylashgan.
+        Uning tarixi Buyuk Ipak yo'li, qadimiy shaharlar,
+        ilm-fan va hunarmandchilik bilan chambarchas bog'liq.
+    </p>
+</div>
+
+<div class="intro-grid">
+
+<div class="intro-image">
+<img
+src="https://images.unsplash.com/photo-1564507592333-c60657eea523?auto=format&fit=crop&w=1200&q=85"
+alt="O'zbekiston me'morchiligi">
+</div>
+
+<div class="intro-text">
+
+<h3>O'zbekiston qanday mamlakat?</h3>
+
+<p>
+O'zbekiston Markaziy Osiyodagi davlat bo'lib, qadimdan
+savdo yo'llari kesishgan hududlardan biri bo'lgan.
+Samarqand, Buxoro, Xiva, Toshkent, Termiz va boshqa
+shaharlar tarixiy merosning muhim markazlaridir.
+</p>
+
+<p>
+Mamlakatda qadimiy me'moriy obidalar bilan bir qatorda
+zamonaviy shaharlar, tog'lar, cho'llar, vodiylar va
+turli xil tabiiy hududlar mavjud.
+</p>
+
+<button class="more-btn" onclick="toggleMore(this)">
+    ▼ Batafsil ma'lumot
+</button>
+
+<div class="more-content">
+
+<ul class="info-list">
+
+<li>
+<b>Rasmiy nomi:</b>
+O'zbekiston Respublikasi
+</li>
+
+<li>
+<b>Poytaxti:</b>
+Toshkent
+</li>
+
+<li>
+<b>Davlat tili:</b>
+o'zbek tili
+</li>
+
+<li>
+<b>Valyutasi:</b>
+O'zbekiston so'mi
+</li>
+
+<li>
+<b>Mustaqillik kuni:</b>
+1-sentabr
+</li>
+
+<li>
+<b>Mintaqa:</b>
+Markaziy Osiyo
+</li>
+
+<li>
+<b>Tarixiy ahamiyati:</b>
+Buyuk Ipak yo'lining muhim chorrahalaridan biri
+</li>
+
+</ul>
+
+</div>
+
+</div>
+</div>
+
+</div>
+</section>
+
+
+<!-- ================= CITIES ================= -->
+
+<section class="cities" id="cities">
+
+<div class="container">
+
+<div class="section-head">
+    <div class="eyebrow">Shaharlar</div>
+    <h2>O'zbekistonning mashhur shaharlari</h2>
+    <p>
+        Har bir shahar o'zining tarixi, me'morchiligi,
+        taomlari va madaniyati bilan ajralib turadi.
+    </p>
+</div>
+
+<div class="cards">
+
+<!-- TASHKENT -->
+
+<div class="card city-card">
+
+<div class="card-image">
+<img src="https://images.unsplash.com/photo-1586613834930-3f5e9c1d6f8c?auto=format&fit=crop&w=1000&q=85"
+alt="Toshkent">
+</div>
+
+<div class="city-overlay">
+<h3>Toshkent</h3>
+<p>O'zbekiston poytaxti va yirik zamonaviy metropolis.</p>
+
+<button class="more-btn"
+onclick="toggleMore(this)">
+Batafsil
+</button>
+
+<div class="more-content">
+
+<p>
+Toshkent O'zbekistonning siyosiy, iqtisodiy,
+ilmiy va madaniy markazidir. Shaharda zamonaviy
+binolar, bog'lar, muzeylar, bozorlar va mashhur
+Toshkent metrosi mavjud.
+</p>
+
+</div>
+</div>
+
+</div>
+
+
+<!-- SAMARKAND -->
+
+<div class="card city-card">
+
+<div class="card-image">
+<img src="https://images.unsplash.com/photo-1548013146-72479768bada?auto=format&fit=crop&w=1000&q=85"
+alt="Samarqand">
+</div>
+
+<div class="city-overlay">
+<h3>Samarqand</h3>
+<p>Madaniyatlar chorrahasi va Temuriylar davri merosi.</p>
+
+<button class="more-btn"
+onclick="toggleMore(this)">
+Batafsil
+</button>
+
+<div class="more-content">
+
+<p>
+Samarqand tarixiy Ipak yo'lining eng muhim
+shaharlaridan biri. Registon, Bibixonim masjidi,
+Shohi Zinda, Go'ri Amir va Ulug'bek rasadxonasi
+uning mashhur obidalaridandir.
+</p>
+
+</div>
+</div>
+
+</div>
+
+
+<!-- BUKHARA -->
+
+<div class="card city-card">
+
+<div class="card-image">
+<img src="https://images.unsplash.com/photo-1597255687820-0d0f0a1b5e85?auto=format&fit=crop&w=1000&q=85"
+alt="Buxoro">
+</div>
+
+<div class="city-overlay">
+<h3>Buxoro</h3>
+<p>Ming yillik tarix va islomiy me'morchilik markazi.</p>
+
+<button class="more-btn"
+onclick="toggleMore(this)">
+Batafsil
+</button>
+
+<div class="more-content">
+
+<p>
+Buxoro tarixiy markazida masjidlar, madrasalar,
+savdo gumbazlari, Ark qal'asi va Minorai Kalon
+kabi ko'plab tarixiy yodgorliklar saqlangan.
+</p>
+
+</div>
+</div>
+
+</div>
+
+
+<!-- KHIVA -->
+
+<div class="card city-card">
+
+<div class="card-image">
+<img src="https://images.unsplash.com/photo-1564769625905-50e93615e769?auto=format&fit=crop&w=1000&q=85"
+alt="Xiva">
+</div>
+
+<div class="city-overlay">
+<h3>Xiva</h3>
+<p>Ichan-Qal'a va Xorazm tarixining qadimiy shahri.</p>
+
+<button class="more-btn"
+onclick="toggleMore(this)">
+Batafsil
+</button>
+
+<div class="more-content">
+
+<p>
+Xivaning Ichan-Qal'a qismi qadimiy shahar
+muhitini saqlab qolgan tarixiy majmualardan biridir.
+Kalta Minor, Ko'hna Ark, Toshhovli va Juma masjidi
+eng mashhur obyektlar qatoriga kiradi.
+</p>
+
+</div>
+</div>
+
+</div>
+
+</div>
+</div>
+</section>
+
+
+<!-- ================= HISTORY ================= -->
+
+<section class="history" id="history">
+
+<div class="container">
+
+<div class="section-head">
+<div class="eyebrow">Tarix</div>
+<h2>Asrlar davomida shakllangan sivilizatsiya</h2>
+<p>
+O'zbekiston hududi qadimgi sivilizatsiyalar,
+Ipak yo'li va Temuriylar davri bilan bog'liq.
+</p>
+</div>
+
+<div class="timeline">
+
+<div class="timeline-item">
+<div class="timeline-dot"></div>
+<div class="timeline-box">
+<h3>Qadimgi davr</h3>
+<p>
+So'g'diyona, Baqtriya va Xorazm kabi qadimiy
+madaniy markazlar ushbu hudud tarixida muhim
+o'rin egallagan.
+</p>
+</div>
+</div>
+
+<div class="timeline-item">
+<div class="timeline-dot"></div>
+<div class="timeline-box">
+<h3>Buyuk Ipak yo'li</h3>
+<p>
+Samarqand, Buxoro, Xiva va boshqa shaharlar
+Sharq va G'arb o'rtasidagi savdo va madaniy
+almashinuvning muhim nuqtalariga aylangan.
+</p>
+</div>
+</div>
+
+<div class="timeline-item">
+<div class="timeline-dot"></div>
+<div class="timeline-box">
+<h3>Temuriylar davri</h3>
+<p>
+XIV–XV asrlarda Samarqand yirik siyosiy,
+me'moriy va ilmiy markazga aylangan.
+Amir Temur va Mirzo Ulug'bek davri shu
+tarixning muhim qismidir.
+</p>
+</div>
+</div>
+
+<div class="timeline-item">
+<div class="timeline-dot"></div>
+<div class="timeline-box">
+<h3>Mustaqillik</h3>
+<p>
+O'zbekiston 1991-yil 1-sentabrda davlat
+mustaqilligini e'lon qilgan.
+</p>
+</div>
+</div>
+
+</div>
+
+</div>
+</section>
+
+
+<!-- ================= PLACES ================= -->
+
+<section id="places">
+
+<div class="container">
+
+<div class="section-head">
+<div class="eyebrow">Diqqatga sazovor joylar</div>
+<h2>Ko'rishga arziydigan maskanlar</h2>
+<p>
+O'zbekistonda tarixiy obidalar, qadimiy qal'alar,
+masjidlar, madrasalar va zamonaviy maskanlar ko'p.
+</p>
+</div>
+
+<div class="place-grid">
+
+<div class="place">
+<img src="https://images.unsplash.com/photo-1548013146-72479768bada?auto=format&fit=crop&w=900&q=85">
+<div class="place-content">
+<h3>Registon</h3>
+<p>Samarqand</p>
+</div>
+</div>
+
+<div class="place">
+<img src="https://images.unsplash.com/photo-1586613834930-3f5e9c1d6f8c?auto=format&fit=crop&w=900&q=85">
+<div class="place-content">
+<h3>Ark qal'asi</h3>
+<p>Buxoro</p>
+</div>
+</div>
+
+<div class="place">
+<img src="https://images.unsplash.com/photo-1564769625905-50e93615e769?auto=format&fit=crop&w=900&q=85">
+<div class="place-content">
+<h3>Ichan-Qal'a</h3>
+<p>Xiva</p>
+</div>
+</div>
+
+<div class="place">
+<img src="https://images.unsplash.com/photo-1564507592333-c60657eea523?auto=format&fit=crop&w=900&q=85">
+<div class="place-content">
+<h3>Hazrati Imom</h3>
+<p>Toshkent</p>
+</div>
+</div>
+
+</div>
+
+</div>
+</section>
+
+
+<!-- ================= FOOD ================= -->
+
+<section class="food" id="food">
+
+<div class="container">
+
+<div class="section-head">
+<div class="eyebrow">Milliy oshxona</div>
+<h2>O'zbek taomlari</h2>
+<p>
+O'zbek oshxonasi guruch, go'sht, sabzavot,
+xamir va turli ziravorlardan foydalanishi bilan mashhur.
+</p>
+</div>
+
+<div class="cards">
+
+<div class="card">
+<div class="card-image">
+<img src="https://images.unsplash.com/photo-1512058564366-18510be2db19?auto=format&fit=crop&w=900&q=85"
+alt="Palov">
+</div>
+<div class="card-body">
+<span class="tag">Milliy taom</span>
+<h3>🍚 Palov</h3>
+<p>
+Guruch, sabzi, go'sht, piyoz va ziravorlar
+asosida tayyorlanadigan mashhur taom.
+</p>
+
+<button class="more-btn" onclick="toggleMore(this)">
+Batafsil
+</button>
+
+<div class="more-content">
+<p>
+Palov O'zbekistonda bayramlar, to'ylar,
+mehmondorchilik va turli marosimlarda
+tayyorlanadigan an'anaviy taomlardan biridir.
+</p>
+</div>
+
+</div>
+</div>
+
+
+<div class="card">
+<div class="card-image">
+<img src="https://images.unsplash.com/photo-1601050690597-df0568f70950?auto=format&fit=crop&w=900&q=85"
+alt="Somsa">
+</div>
+<div class="card-body">
+<span class="tag">Milliy taom</span>
+<h3>🥟 Somsa</h3>
+<p>
+Xamir ichiga go'sht, piyoz yoki boshqa
+masalliqlar solib pishiriladigan taom.
+</p>
+
+<button class="more-btn" onclick="toggleMore(this)">
+Batafsil
+</button>
+
+<div class="more-content">
+<p>
+Somsa tandirda yoki pechda tayyorlanishi mumkin.
+Uning turli hududlarda o'ziga xos tayyorlash usullari mavjud.
+</p>
+</div>
+
+</div>
+</div>
+
+
+<div class="card">
+<div class="card-image">
+<img src="https://images.unsplash.com/photo-1547592180-85f173990554?auto=format&fit=crop&w=900&q=85"
+alt="Shashlik">
+</div>
+<div class="card-body">
+<span class="tag">Milliy taom</span>
+<h3>🍢 Shashlik</h3>
+<p>
+Go'sht bo'laklarini sixga terib,
+ko'mir yoki olovda pishirish orqali tayyorlanadi.
+</p>
+</div>
+</div>
+
+
+<div class="card">
+<div class="card-image">
+<img src="https://images.unsplash.com/photo-1601050690117-94f5f6fa8bd7?auto=format&fit=crop&w=900&q=85"
+alt="Non">
+</div>
+<div class="card-body">
+<span class="tag">Non</span>
+<h3>🥖 O'zbek noni</h3>
+<p>
+O'zbek dasturxonining ajralmas qismi bo'lgan
+an'anaviy non turlaridan biri.
+</p>
+</div>
+</div>
+
+</div>
+
+</div>
+</section>
+
+
+<!-- ================= CULTURE ================= -->
+
+<section>
+
+<div class="container">
+
+<div class="section-head">
+<div class="eyebrow">Madaniyat</div>
+<h2>O'zbek madaniyati</h2>
+<p>
+An'analar, hunarmandchilik, musiqa, raqs va
+mehmondo'stlik O'zbekiston madaniyatining muhim qismlaridir.
+</p>
+</div>
+
+<div class="culture-grid">
+
+<div class="culture-box">
+<div class="icon">🎨</div>
+<h3>Hunarmandchilik</h3>
+<p>
+Kulolchilik, zardo'zlik, kashtachilik,
+gilamchilik va yog'och o'ymakorligi
+ko'p asrlik an'analarga ega.
+</p>
+</div>
+
+<div class="culture-box">
+<div class="icon">🎵</div>
+<h3>Musiqa</h3>
+<p>
+Shashmaqom, katta ashula va turli xalq
+musiqasi an'analari O'zbekistonning
+madaniy merosida muhim o'rin tutadi.
+</p>
+</div>
+
+<div class="culture-box">
+<div class="icon">💃</div>
+<h3>Raqs</h3>
+<p>
+Lazgi kabi an'anaviy raqslar O'zbekiston
+madaniyatining xalqaro miqyosda tanilgan
+yo'nalishlaridan biridir.
+</p>
+</div>
+
+<div class="culture-box">
+<div class="icon">🌸</div>
+<h3>Navro'z</h3>
+<p>
+Bahorning kelishi bilan bog'liq Navro'z
+xalq bayrami sifatida keng nishonlanadi.
+</p>
+</div>
+
+</div>
+
+</div>
+</section>
+
+
+<!-- ================= NATURE ================= -->
+
+<section class="nature" id="nature">
+
+<div class="container">
+
+<div class="section-head">
+<div class="eyebrow">Tabiat</div>
+<h2>Cho'llardan tog'larga</h2>
+<p>
+O'zbekistonda tog'lar, vodiylar, cho'llar,
+daryolar, ko'llar va turli tabiiy landshaftlarni uchratish mumkin.
+</p>
+</div>
+
+<div class="cards">
+
+<div class="card">
+<div class="card-image">
+<img src="https://images.unsplash.com/photo-1519681393784-d120267933ba?auto=format&fit=crop&w=900&q=85">
+</div>
+<div class="card-body">
+<h3>🏔 Chimgan</h3>
+<p>
+Toshkent viloyatidagi tog'li hududlar
+sayohat va tabiat manzaralari bilan mashhur.
+</p>
+</div>
+</div>
+
+<div class="card">
+<div class="card-image">
+<img src="https://images.unsplash.com/photo-1500534623283-312aade485b7?auto=format&fit=crop&w=900&q=85">
+</div>
+<div class="card-body">
+<h3>🏜 Qizilqum</h3>
+<p>
+Markaziy Osiyodagi yirik cho'l hududlaridan
+biri bo'lib, O'zbekiston hududining katta
+qismini qamrab oladi.
+</p>
+</div>
+</div>
+
+<div class="card">
+<div class="card-image">
+<img src="https://images.unsplash.com/photo-1500534623283-312aade485b7?auto=format&fit=crop&w=900&q=85">
+</div>
+<div class="card-body">
+<h3>🌊 Orolbo'yi</h3>
+<p>
+Orol dengizi bilan bog'liq hudud ekologik
+tarix va zamonaviy ekologik muammolar
+nuqtayi nazaridan katta ahamiyatga ega.
+</p>
+</div>
+</div>
+
+</div>
+
+</div>
+</section>
+
+
+<!-- ================= UNESCO ================= -->
+
+<section>
+
+<div class="container">
+
+<div class="section-head">
+<div class="eyebrow">UNESCO</div>
+<h2>Jahon merosi</h2>
+<p>
+O'zbekistonning tarixiy va tabiiy merosi xalqaro
+miqyosda ham e'tirof etilgan.
+</p>
+</div>
+
+<div class="unesco">
+
+<div class="unesco-box">
+
+<h3>🏛 Jahon merosi ro'yxatidagi obyektlar</h3>
+
+<ul>
+
+<li>
+<strong>Itchan Kala</strong> — Xiva
+</li>
+
+<li>
+<strong>Historic Centre of Bukhara</strong> — Buxoro
+</li>
+
+<li>
+<strong>Samarkand – Crossroad of Cultures</strong> — Samarqand
+</li>
+
+<li>
+<strong>Historic Centre of Shakhrisyabz</strong> — Shahrisabz
+</li>
+
+<li>
+<strong>Silk Roads: Zarafshan-Karakum Corridor</strong>
+</li>
+
+<li>
+<strong>Tashkent Modernist Architecture</strong>
+</li>
+
+<li>
+<strong>Cold Winter Deserts of Turan</strong>
+</li>
+
+<li>
+<strong>Western Tien-Shan</strong>
+</li>
+
+</ul>
+
+</div>
+
+<div class="unesco-box">
+
+<h3>🌏 Nomoddiy meros</h3>
+
+<p>
+O'zbekistonning madaniy merosi faqat tarixiy
+binolar bilan cheklanmaydi.
+</p>
+
+<br>
+
+<p>
+Navro'z, Shashmaqom, Katta Ashula, Askiya,
+Lazgi, palov madaniyati, atlas va adras
+tayyorlash hamda miniatyura san'ati kabi
+an'analar xalqaro nomoddiy madaniy meros
+ro'yxatlarida qayd etilgan.
+</p>
+
+<br>
+
+<button class="more-btn" onclick="toggleMore(this)">
+▼ Batafsil
+</button>
+
+<div class="more-content">
+
+<p>
+Bu meros shakllari avloddan avlodga o'tib,
+O'zbekistonning musiqa, raqs, oshxona,
+hunarmandchilik va kundalik madaniyatini
+saqlashga xizmat qiladi.
+</p>
+
+</div>
+
+</div>
+
+</div>
+
+</div>
+</section>
+
+
+<!-- ================= GALLERY ================= -->
+
+<section id="gallery">
+
+<div class="container">
+
+<div class="section-head">
+<div class="eyebrow">Foto galereya</div>
+<h2>O'zbekiston manzaralari</h2>
+<p>
+Tarixiy shaharlar, me'moriy obidalar va
+O'zbekistonning turli manzaralari.
+</p>
+</div>
+
+<div class="gallery">
+
+<div class="gallery-item big">
+<img src="https://images.unsplash.com/photo-1548013146-72479768bada?auto=format&fit=crop&w=1400&q=90"
+alt="Samarqand">
+</div>
+
+<div class="gallery-item">
+<img src="https://images.unsplash.com/photo-1564769625905-50e93615e769?auto=format&fit=crop&w=900&q=85"
+alt="Xiva">
+</div>
+
+<div class="gallery-item">
+<img src="https://images.unsplash.com/photo-1564507592333-c60657eea523?auto=format&fit=crop&w=900&q=85"
+alt="O'zbekiston">
+</div>
+
+<div class="gallery-item">
+<img src="https://images.unsplash.com/photo-1519681393784-d120267933ba?auto=format&fit=crop&w=900&q=85"
+alt="Tog'lar">
+</div>
+
+<div class="gallery-item">
+<img src="https://images.unsplash.com/photo-1500534623283-312aade485b7?auto=format&fit=crop&w=900&q=85"
+alt="Tabiat">
+</div>
+
+<div class="gallery-item">
+<img src="https://images.unsplash.com/photo-1586613834930-3f5e9c1d6f8c?auto=format&fit=crop&w=900&q=85"
+alt="Toshkent">
+</div>
+
+</div>
+
+</div>
+</section>
+
+
+<!-- ================= FAQ ================= -->
+
+<section>
+
+<div class="container">
+
+<div class="section-head">
+<div class="eyebrow">Ko'p so'raladigan savollar</div>
+<h2>O'zbekiston haqida</h2>
+</div>
+
+<div class="faq">
+
+<div class="faq-item">
+<button class="faq-question">
+O'zbekiston qayerda joylashgan?
+<span>＋</span>
+</button>
+<div class="faq-answer">
+<p>
+O'zbekiston Markaziy Osiyoda joylashgan.
+U Qozog'iston, Qirg'iziston, Tojikiston,
+Afg'oniston va Turkmaniston bilan chegaradosh.
+</p>
+</div>
+</div>
+
+
+<div class="faq-item">
+<button class="faq-question">
+Poytaxt qaysi shahar?
+<span>＋</span>
+</button>
+<div class="faq-answer">
+<p>
+O'zbekiston Respublikasining poytaxti — Toshkent.
+</p>
+</div>
+</div>
+
+
+<div class="faq-item">
+<button class="faq-question">
+Eng mashhur tarixiy shaharlar qaysilar?
+<span>＋</span>
+</button>
+<div class="faq-answer">
+<p>
+Samarqand, Buxoro, Xiva va Shahrisabz
+O'zbekistonning eng muhim tarixiy markazlari
+qatoriga kiradi.
+</p>
+</div>
+</div>
+
+
+<div class="faq-item">
+<button class="faq-question">
+O'zbekistonda nima yeyish kerak?
+<span>＋</span>
+</button>
+<div class="faq-answer">
+<p>
+Palov, somsa, shashlik, lag'mon, manti,
+norin, sho'rva va turli xil nonlarni
+sinab ko'rish mumkin.
+</p>
+</div>
+</div>
+
+
+<div class="faq-item">
+<button class="faq-question">
+O'zbekistonda qanday tabiat mavjud?
+<span>＋</span>
+</button>
+<div class="faq-answer">
+<p>
+Tog'lar, cho'llar, vodiylar, daryolar,
+ko'llar va Orolbo'yi hududlari mavjud.
+</p>
+</div>
+</div>
+
+</div>
+
+</div>
+</section>
+
+
+<!-- ================= FOOTER ================= -->
+
+<footer>
+
+<div class="container">
+
+<div class="footer-grid">
+
+<div>
+
+<div class="logo">
+<div class="flag">
+<span class="a"></span>
+<span class="b"></span>
+<span class="c"></span>
+</div>
+O'ZBEKISTON
+</div>
+
+<br>
+
+<p>
+O'zbekiston haqida tarix, madaniyat,
+tabiat, shaharlar va turizmga bag'ishlangan
+interaktiv ma'lumotnoma.
+</p>
+
+</div>
+
+<div>
+
+<h3>Bo'limlar</h3>
+
+<ul>
+<li><a href="#about">O'zbekiston</a></li>
+<li><a href="#cities">Shaharlar</a></li>
+<li><a href="#history">Tarix</a></li>
+<li><a href="#places">Obidalar</a></li>
+</ul>
+
+</div>
+
+<div>
+
+<h3>Qo'shimcha</h3>
+
+<ul>
+<li><a href="#food">Milliy taomlar</a></li>
+<li><a href="#nature">Tabiat</a></li>
+<li><a href="#gallery">Galereya</a></li>
+</ul>
+
+</div>
+
+</div>
+
+<div class="copyright">
+© 2026 O'zbekiston — Buyuk Yurt. Ta'limiy va ma'lumotnoma loyihasi.
+</div>
+
+</div>
+
+</footer>
+
+
+<button class="top" id="topBtn">↑</button>
+
+
+<script>
+
+/* ================= MOBILE MENU ================= */
+
+const menuBtn = document.getElementById("menuBtn");
+const navLinks = document.getElementById("navLinks");
+
+menuBtn.addEventListener("click", () => {
+    navLinks.classList.toggle("active");
+});
+
+
+document.querySelectorAll(".nav-links a").forEach(link => {
+    link.addEventListener("click", () => {
+        navLinks.classList.remove("active");
+    });
+});
+
+
+/* ================= NAVBAR ================= */
+
+const navbar = document.getElementById("navbar");
+
+window.addEventListener("scroll", () => {
+
+    if(window.scrollY > 50){
+        navbar.classList.add("scrolled");
+    }else{
+        navbar.classList.remove("scrolled");
+    }
+
+});
+
+
+/* ================= BATAFSIL TUGMASI ================= */
+
+function toggleMore(button){
+
+    const content = button.nextElementSibling;
+
+    content.classList.toggle("open");
+
+    if(content.classList.contains("open")){
+
+        button.innerHTML = "▲ Yopish";
+
+    }else{
+
+        button.innerHTML = "▼ Batafsil ma'lumot";
+
+    }
+}
+
+
+/* ================= FAQ ================= */
+
+document.querySelectorAll(".faq-question").forEach(button => {
+
+    button.addEventListener("click", () => {
+
+        const answer = button.nextElementSibling;
+        const icon = button.querySelector("span");
+
+        const isOpen = answer.style.maxHeight;
+
+        document.querySelectorAll(".faq-answer").forEach(item => {
+            item.style.maxHeight = null;
+        });
+
+        document.querySelectorAll(".faq-question span").forEach(item => {
+            item.textContent = "＋";
+        });
+
+        if(!isOpen){
+
+            answer.style.maxHeight = answer.scrollHeight + "px";
+            icon.textContent = "−";
+
+        }
+
+    });
+
+});
+
+
+/* ================= TOP BUTTON ================= */
+
+const topBtn = document.getElementById("topBtn");
+
+window.addEventListener("scroll", () => {
+
+    if(window.scrollY > 500){
+        topBtn.classList.add("show");
+    }else{
+        topBtn.classList.remove("show");
+    }
+
+});
+
+topBtn.addEventListener("click", () => {
+
+    window.scrollTo({
+        top:0,
+        behavior:"smooth"
+    });
+
+});
+
+
+/* ================= IMAGE ERROR ================= */
+
+document.querySelectorAll("img").forEach(img => {
+
+    img.addEventListener("error", () => {
+
+        img.style.background =
+            "linear-gradient(135deg,#0877d1,#071522)";
+
+        img.style.minHeight = "180px";
+
+    });
+
+});
+
+</script>
+
+</body>
+</html>
